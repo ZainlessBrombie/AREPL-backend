@@ -3,13 +3,13 @@ from customHandlers import handlers
 from importlib import util #https://stackoverflow.com/questions/39660934/error-when-using-importlib-util-to-check-for-library
 import json
 import jsonpickle
-import traceback
+from traceback import TracebackException
 from math import isnan
 import ast
 from time import time
 import asyncio
 import os
-from sys import path, modules, argv, version_info
+from sys import path, modules, argv, version_info, exc_info
 from contextlib import contextmanager
 from moduleLogic import getNonUserModules
 import inspect
@@ -86,12 +86,12 @@ class customPickler(jsonpickle.pickler.Pickler):
 class UserError(Exception):
     """
     user errors should be caught and re-thrown with this
-    Be warned that this exception can throw an exception.  Yes, you read that right.  I apolagize in advance.
+    Be warned that this exception can throw an exception.  Yes, you read that right.  I apologize in advance.
     :raises: ValueError (varsSoFar gets pickled into JSON, which may result in any number of errors depending on what types are inside)
     """
 
-    def __init__(self, message, varsSoFar={}):
-        super().__init__(message)
+    def __init__(self, exc_obj, exc_tb, varsSoFar={}):
+        self.traceback_exception = TracebackException(type(exc_obj), exc_obj, exc_tb, limit=100)
         self.varsSoFar = pickle_user_vars(varsSoFar)
 
 
@@ -235,8 +235,8 @@ def exec_saved(savedLines: str):
     try:
         exec(savedLines, savedLocals)
     except Exception:
-        errorMsg = traceback.format_exc()
-        raise UserError(errorMsg, savedLocals)
+        _, exc_obj, exc_tb = exc_info()
+        raise UserError(exc_obj, exc_tb, evalLocals)
 
     # deepcopy cant handle imported modules, so remove them
     savedLocals = {k:v for k,v in savedLocals.items() if str(type(v)) != "<class 'module'>"}
@@ -295,8 +295,8 @@ def copy_saved_imports_to_exec(codeToExec: str, savedLines: str):
         try:
             savedCodeAST = ast.parse(savedLines)
         except SyntaxError:
-            errorMsg = traceback.format_exc()
-            raise UserError(errorMsg)
+            _, exc_obj, exc_tb = exc_info()
+            raise UserError(exc_obj, exc_tb, evalLocals)
 
         imports = get_imports(savedCodeAST, savedLines)
         codeToExec = imports + '\n' + codeToExec
@@ -367,8 +367,8 @@ def exec_input(codeToExec: str, savedLines: str = "", filePath: str = "", usePre
             exec(codeToExec, evalLocals)
             execTime = time() - start
         except BaseException:
-            errorMsg = traceback.format_exc()
-            raise UserError(errorMsg, evalLocals)
+            _, exc_obj, exc_tb = exc_info()
+            raise UserError(exc_obj, exc_tb, evalLocals)
 
         finally:
 
@@ -430,11 +430,10 @@ if __name__ == '__main__':
         except (KeyboardInterrupt, SystemExit):
             raise
         except UserError as e:
-            myReturnInfo.userError = str(e)
+            myReturnInfo.userError = e.traceback_exception
             myReturnInfo.userVariables = e.varsSoFar
-        except Exception:
-            errorMsg = traceback.format_exc()
-            myReturnInfo.internalError = "Sorry, AREPL has ran into an error\n\n" + errorMsg
+        except Exception as e:
+            myReturnInfo.internalError = "Sorry, AREPL has ran into an error\n\n" + str(e)
 
         myReturnInfo.totalPyTime = time() - start
 
